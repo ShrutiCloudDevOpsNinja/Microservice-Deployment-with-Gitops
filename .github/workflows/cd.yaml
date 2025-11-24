@@ -1,0 +1,77 @@
+name: CD - Deploy Todo App to AKS (Manifests)
+
+on:
+  workflow_dispatch:
+    inputs:
+      imageTag:
+        description: "Docker image tag to deploy (e.g. 19)"
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      ACR_LOGIN_SERVER: ${{ secrets.ACR_NAME }}.azurecr.io
+      AKS_NAME: ${{ secrets.AKS_NAME }}
+      AKS_RG: ${{ secrets.AKS_RG }}
+      IMAGE_TAG: ${{ github.event.inputs.imageTag }}
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Azure Login (OIDC)
+      uses: azure/login@v1
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    - name: Get AKS admin credentials
+      run: |
+        echo "🔐 Fetching AKS Admin Credentials"
+        az aks get-credentials \
+          --resource-group "$AKS_RG" \
+          --name "$AKS_NAME" \
+          --admin \
+          --overwrite-existing
+
+    - name: Apply manifests
+      run: |
+        echo "📦 Applying manifests from all microservices..."
+        kubectl apply -f AddTaskTodoMicroservice/manifests/
+        kubectl apply -f DeleteTaskTodoMicroservice/manifests/
+        kubectl apply -f GetTasksTodoMicroservice/manifests/
+        kubectl apply -f MicroTodoUI/manifests/
+        echo "📡 Current deployments:"
+        kubectl get deploy -n default
+
+    - name: Update backend images with new tag
+      run: |
+        TAG="$IMAGE_TAG"
+        ACR="$ACR_LOGIN_SERVER"
+
+        declare -A images
+        images["todo-add-tasks-api"]="$ACR/addtasktodomicroservice:$TAG"
+        images["todo-delete-tasks-api"]="$ACR/deletetasktodomicroservice:$TAG"
+        images["todo-get-task-api"]="$ACR/gettaskstodomicroservice:$TAG"
+
+        for dep in "${!images[@]}"; do
+          image="${images[$dep]}"
+          echo "🚀 Updating deployment $dep -> $image"
+
+          kubectl patch deployment "$dep" -n default \
+            --type='json' \
+            -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/image\",\"value\":\"$image\"}]"
+
+          kubectl rollout status deployment "$dep" -n default
+        done
+
+    - name: Show pods
+      run: |
+        kubectl get pods -n default -o wide
