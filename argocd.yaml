@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: todo-microservices-gitops
+  namespace: argocd
+spec:
+  generators:
+  - list:
+      elements:
+      - name: add-task-api
+        path: AddTaskTodoMicroservice/manifests
+      - name: delete-task-api
+        path: DeleteTaskTodoMicroservice/manifests
+      - name: get-task-api
+        path: GetTasksTodoMicroservice/manifests
+      - name: todo-ui
+        path: MicroTodoUI/manifests
+
+  template:
+    metadata:
+      name: "{{name}}"
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/ShrutiCloudDevOpsNinja/Microservice-Deployment-with-GitOps.git
+        targetRevision: HEAD
+        path: "{{path}}"
+        directory:
+          recurse: true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: default
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
